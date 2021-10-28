@@ -1,5 +1,7 @@
 library(compiler)
 library(schoolmath)
+library(doParallel)
+library(foreach)
 
 ################################################################
 
@@ -66,10 +68,15 @@ dist <- function(p){
 }
 
 #relative displacement of individual particle rest of system particles
-disp <- function(j,st){
-  gg = lapply(st,function(k,j) j - unlist(k),unlist(j))
-  d = sapply(gg, dist) - (2*rad)
-  d[which(d<0)]=0
+# disp <- function(j,st){
+#   gg = lapply(st,function(k,j) j - unlist(k),unlist(j))
+#   d = sapply(gg, dist) - (2*rad)
+#   d[which(d<0)]=0
+#   return(d)
+# }
+disp <- function(st){
+  gg = dist(st,upper=TRUE,diag=TRUE)
+  d = as.matrix(gg) - (2*rad)
   return(d)
 }
 # detour_disp <- function(j,k) {
@@ -80,8 +87,7 @@ disp <- function(j,st){
 #pairwise Van der Waal energy
 part_en <- function(d) {
   e = -(H*rad)/(12*d)
-  if(e == -Inf) return(0)
-  else
+  e[!is.finite(e)] = 0
   return(e)
 }
 
@@ -97,35 +103,38 @@ update_max <- function(max,p){
 
 #update system configuration for 1000 time steps
 time_step <- function(st,l) {
-  st[[1]] = l[[1]]
+  st[[1]] = l
+  part_disp = matrix()
   print("Initial config...")
-  print("Calculating Euclidean distance...")
-  dist_l = lapply(l[[1]], dist)
-  print("Calculating displacements...")
-  part_disp = lapply(l[[1]],disp,l[[1]])
+  print("Calculating Euclidean displacements...")
+  part_disp = disp(l)
   print("Calculating VDW energies...")
+  en = part_en(part_disp)
   part_en_list = c()
   step_part_en = list()
-  for (k in 1:10000){
-    part_en_list=c(part_en_list,sum(sapply(part_disp[[k]],part_en)))
+  for (k in seq(10000,100000000,by=10000)){
+    part_en_list=c(part_en_list,sum(en[(k-9999):k]))
   }
   step_part_en[[1]] = part_en_list
   
   print("100 time steps begin...")
   for (i in 1:100){
+    part_disp = matrix()
+    en = matrix()
     print(i)
     #o  = st[[length(st)]]
     print("Updating positions...")
-    nl = Map(update_pos,st[[length(st)]],max)
+    l = split(l,row(l))
+    nl = Map(update_pos,l,max)
+    nl = matrix(unlist(nl),10000,3)
     st[[length(st)+1]] = nl
-    print("Distances...")
-    dist_l = lapply(st[[length(st)]], dist)
     print("Displacements...")
-    part_disp = lapply(nl,disp,nl)
-    part_en_list = c()
+    part_disp = disp(nl)
+    part_en_list= c()
     print("Energies...")
-    for (k in 1:10000){
-      part_en_list=c(part_en_list,sum(sapply(part_disp[[k]],part_en)))
+    en = part_en(part_disp)
+    for (k in seq(10000,100000000,by=10000)){
+      part_en_list=c(part_en_list,sum(en[(k-9999):k]))
     }
     step_part_en[[2]] = part_en_list
     print("Comparing energies...")
@@ -141,6 +150,7 @@ time_step <- function(st,l) {
     max <<- mx
     step_part_en[[1]] = part_en_list
     step_part_en[[2]] = c()
+    l = nl
   }
   return (st)
 }
@@ -152,11 +162,11 @@ g = cmpfun(time_step)
 
 #10^3 time step updates
 st = list()
-o = l
-for (iter in 1:10){
+o = matrix(unlist(l),10000,3)
+for (iter in 1:30){
 sprintf("%d timesteps begin",i*100)
-big_iter = 1
-st = g(st,o)
+big_iter = 2 + floor(iter/10)
+st = time_step(st,o)
 #saving mechanism
 lo = paste0("C:/Users/buser/Desktop/temp/BigStep_",big_iter)
 if(!dir.exists(lo)){
@@ -164,7 +174,7 @@ if(!dir.exists(lo)){
 }
 flo = paste0(lo,"/SmallStep_",iter,".RData")
 st_lite = st[1:100]
-o = st[101]
+o = matrix(unlist(st[101]),10000,3)
 save(st_lite,file=flo)
 steps = 100*iter
 sprintf("%d timesteps end",steps)
